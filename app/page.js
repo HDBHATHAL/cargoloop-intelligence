@@ -79,6 +79,28 @@ const BR_LANES = [
     mar:{"2025-08":1900,"2025-09":1900,"2025-10":1750,"2025-11":1750}},
 ]
 
+// ── Cost Intelligence data ─────────────────────────────────────────────────
+const COST_DEFAULTS = {
+  fuel_ppg:3.34, mpg:6.6, toll:0.15, def:0.02, reefer:0.02, maint:0.15, driver:0,
+  truck_pmt:2666, trailer_pmt:1608, truck_ins:2282, trailer_ins:439, miles_mo:10000
+};
+const COST_LANES = [
+  {lane:"Berea KY → Frederick MD → Rochester NY",rev:3289,mi:839,ct:24,type:"SG",trend:"UP"},
+  {lane:"AppHarvest (Richmond KY) → Rochester NY",rev:2262,mi:638,ct:46,type:"SG",trend:"FLAT"},
+  {lane:"AppHarvest → Wegmans Govna (Rochester NY)",rev:2342,mi:638,ct:20,type:"SG",trend:"FLAT"},
+  {lane:"Green Empire (Oneida NY) → BJ's (Elkton MD)",rev:2067,mi:496,ct:38,type:"SG",trend:"UP"},
+  {lane:"Mastronardi (Berea KY) → Stop & Shop (MA)",rev:3723,mi:1020,ct:17,type:"SG",trend:"FLAT"},
+  {lane:"Bosch Berries (Somerset KY) → Meijer / MI",rev:2447,mi:709,ct:17,type:"SG",trend:"UP"},
+  {lane:"AppHarvest (Richmond KY) → Pottsville PA",rev:2321,mi:625,ct:9,type:"SG",trend:"UP"},
+  {lane:"Wapakoneta / Somerset → CT/NJ (Berries)",rev:3097,mi:680,ct:9,type:"SG",trend:"UP"},
+  {lane:"Ontario NY → Johnstown / Schodack NY",rev:1279,mi:192,ct:10,type:"SG",trend:"UP"},
+  {lane:"Ontario / Oneida NY → Jonestown PA",rev:1300,mi:265,ct:7,type:"SG",trend:"FLAT"},
+  {lane:"Saputo (Friendship NY) → Walmart (London KY)",rev:1525,mi:610,ct:24,type:"BR",trend:"UP"},
+  {lane:"Eastern Propak → Walmart (London KY)",rev:1702,mi:610,ct:16,type:"BR",trend:"UP"},
+  {lane:"HP Hood → Walmart DC (London KY)",rev:1483,mi:610,ct:12,type:"BR",trend:"UP"},
+];
+const COST_CUSHION = 1.05;
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function $k(v) { return '$' + Math.round(v).toLocaleString() }
 function qSum(mc, months) { return months.reduce((s,m) => s+(mc[m]||0), 0) }
@@ -192,11 +214,62 @@ function LaneMap({ stops }) {
 export default function Dashboard() {
   const [tab, setTab]             = useState('volume')
   const [selectedLane, setLane]   = useState(0)
+  const [costTab, setCostTab]     = useState('profit')
+  const [targetMargin, setTargetMargin] = useState(25)
+  const [fuelPPG, setFuelPPG]     = useState(COST_DEFAULTS.fuel_ppg)
+  const [mpg, setMPG]             = useState(COST_DEFAULTS.mpg)
+  const [toll, setToll]           = useState(COST_DEFAULTS.toll)
+  const [def_, setDef]            = useState(COST_DEFAULTS.def)
+  const [reefer, setReefer]       = useState(COST_DEFAULTS.reefer)
+  const [maint, setMaint]         = useState(COST_DEFAULTS.maint)
+  const [driver, setDriver]       = useState(COST_DEFAULTS.driver)
+  const [truckPmt, setTruckPmt]   = useState(COST_DEFAULTS.truck_pmt)
+  const [trailerPmt, setTrailerPmt] = useState(COST_DEFAULTS.trailer_pmt)
+  const [truckIns, setTruckIns]   = useState(COST_DEFAULTS.truck_ins)
+  const [trailerIns, setTrailerIns] = useState(COST_DEFAULTS.trailer_ins)
+  const [milesMo, setMilesMo]     = useState(COST_DEFAULTS.miles_mo)
   const chartsReady               = useRef(false)
   const chartInst                 = useRef({})
   const refs = {
     vol: useRef(), bar: useRef(), rate: useRef(),
-    range: useRef(), rpm: useRef(), brRate: useRef(), brVol: useRef(), cycle: useRef()
+    range: useRef(), rpm: useRef(), brRate: useRef(), brVol: useRef(), cycle: useRef(),
+    costProfit: useRef()
+  }
+
+  // Cost computed values
+  const fuelCPM = mpg > 0 ? (fuelPPG / mpg) * COST_CUSHION : 0
+  const tollCPM = toll * COST_CUSHION
+  const defCPM = def_ * COST_CUSHION
+  const reeferCPM = reefer * COST_CUSHION
+  const maintCPM = maint * COST_CUSHION
+  const driverCPM = driver
+  const varCPM = fuelCPM + tollCPM + defCPM + reeferCPM + maintCPM + driverCPM
+  const fixedMo = truckPmt + trailerPmt + truckIns + trailerIns
+  const fixedCPM = milesMo > 0 ? fixedMo / milesMo : 0
+  const allInCPM = varCPM + fixedCPM
+  const mc = m => m >= targetMargin ? '#00FFCC' : m >= 10 ? '#FFB84D' : '#FF6B6B'
+
+  function calcLane(l) {
+    const cost = allInCPM * l.mi
+    const margin = l.rev > 0 ? (l.rev - cost) / l.rev * 100 : 0
+    const profit = l.rev - cost
+    const tgtCost = l.rev * (1 - targetMargin / 100)
+    const tgtCPM = l.mi > 0 ? tgtCost / l.mi : 0
+    const equipCost = (allInCPM - driverCPM) * l.mi
+    const drvBudget = tgtCost - equipCost
+    return { cost:Math.round(cost), margin:Math.round(margin*10)/10, profit:Math.round(profit),
+      tgtCPM:Math.round(tgtCPM*100)/100, tgtCost:Math.round(tgtCost),
+      drvBudget:Math.round(drvBudget), drvCPM:l.mi>0?Math.round(drvBudget/l.mi*100)/100:0,
+      fuelEst:Math.round(fuelCPM*l.mi), tollEst:Math.round(tollCPM*l.mi), fixEst:Math.round(fixedCPM*l.mi),
+      drvEst:Math.round(driverCPM*l.mi), maintEst:Math.round(maintCPM*l.mi) }
+  }
+
+  function resetCosts() {
+    setFuelPPG(COST_DEFAULTS.fuel_ppg); setMPG(COST_DEFAULTS.mpg); setToll(COST_DEFAULTS.toll)
+    setDef(COST_DEFAULTS.def); setReefer(COST_DEFAULTS.reefer); setMaint(COST_DEFAULTS.maint)
+    setDriver(COST_DEFAULTS.driver); setTruckPmt(COST_DEFAULTS.truck_pmt); setTrailerPmt(COST_DEFAULTS.trailer_pmt)
+    setTruckIns(COST_DEFAULTS.truck_ins); setTrailerIns(COST_DEFAULTS.trailer_ins); setMilesMo(COST_DEFAULTS.miles_mo)
+    setTargetMargin(25)
   }
 
   // Load Chart.js once
@@ -222,6 +295,13 @@ export default function Dashboard() {
     return () => clearTimeout(timer)
   }, [selectedLane])
 
+  // Re-render cost chart when cost inputs change
+  useEffect(() => {
+    if (!chartsReady.current || tab !== 'costs') return
+    const timer = setTimeout(() => buildCostProfitChart(), 80)
+    return () => clearTimeout(timer)
+  }, [fuelPPG, mpg, toll, def_, reefer, maint, driver, truckPmt, trailerPmt, truckIns, trailerIns, milesMo, targetMargin, costTab])
+
   function destroy(key) { chartInst.current[key]?.destroy(); chartInst.current[key] = null }
 
   const COLORS = { teal:'#00FFCC', blue:'#4D9EFF', amber:'#FFB84D', red:'#FF6B6B', muted:'rgba(255,255,255,0.15)' }
@@ -236,6 +316,7 @@ export default function Dashboard() {
     if (t === 'rates')  { buildRateChart(C); buildRangeChart(C); buildRpmChart(C) }
     if (t === 'broker') { buildBrRateChart(C); buildBrVolChart(C) }
     if (t === 'cycle')  { buildCycleChart(C) }
+    if (t === 'costs')  { buildCostProfitChart(C) }
   }
 
   function buildVolChart(C = window.Chart) {
@@ -348,6 +429,21 @@ export default function Dashboard() {
     })
   }
 
+  function buildCostProfitChart(C = window.Chart) {
+    if (!refs.costProfit.current) return
+    destroy('costProfit')
+    const sorted = [...COST_LANES].sort((a,b) => calcLane(b).margin - calcLane(a).margin)
+    chartInst.current.costProfit = new C(refs.costProfit.current, {
+      type:'bar', data:{ labels:sorted.map(l => l.lane.length > 32 ? l.lane.slice(0,30)+'…' : l.lane),
+        datasets:[{ data:sorted.map(l => calcLane(l).margin),
+          backgroundColor:sorted.map(l => { const m=calcLane(l).margin; return m>=targetMargin?'rgba(0,255,204,0.7)':m>=10?'rgba(255,184,77,0.6)':'rgba(255,107,107,0.6)' }),
+          borderRadius:3 }] },
+      options:{ ...baseOpts, indexAxis:'y',
+        plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>c.raw+'%'}} },
+        scales:{ x:{grid:GRID,ticks:{...TICK,callback:v=>v+'%'}}, y:{grid:{color:'rgba(255,255,255,0.03)'},ticks:{...TICK,font:{size:9}}} } }
+    })
+  }
+
   function changeTab(t) { setTab(t) }
 
   async function logout() { await fetch('/api/verify',{ method:'POST' }); window.location.href='/login' }
@@ -370,6 +466,18 @@ export default function Dashboard() {
         .tbl tr:hover td { background:rgba(255,255,255,0.03) !important; }
         select option { background:#111; color:#fff; }
         .wpl-select:focus { outline:none; border-color:rgba(0,255,204,0.4) !important; }
+        .cost-stepper { display:flex; align-items:center; gap:0; }
+        .cost-stepper input[type=number] { -moz-appearance:textfield; }
+        .cost-stepper input[type=number]::-webkit-inner-spin-button,
+        .cost-stepper input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+        .stepper-btn { width:28px; height:28px; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.06); border:0.5px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.7); font-size:16px; font-weight:700; cursor:pointer; transition:all 0.15s; user-select:none; line-height:1; }
+        .stepper-btn:hover { background:rgba(0,255,204,0.15); color:#00FFCC; border-color:rgba(0,255,204,0.3); }
+        .stepper-btn:active { background:rgba(0,255,204,0.25); }
+        .stepper-btn.minus { border-radius:5px 0 0 5px; border-right:none; }
+        .stepper-btn.plus { border-radius:0 5px 5px 0; border-left:none; }
+        .cost-sub-tab { padding:6px 12px; border-radius:5px; border:0.5px solid rgba(255,255,255,0.1); background:transparent; color:rgba(255,255,255,0.4); font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; transition:all 0.15s; }
+        .cost-sub-tab:hover { background:rgba(255,255,255,0.04); }
+        .cost-sub-tab.active { background:rgba(0,255,204,0.1); border-color:rgba(0,255,204,0.3); color:#00FFCC; }
       `}</style>
 
       <div style={S.shell}>
@@ -389,7 +497,7 @@ export default function Dashboard() {
           </div>
 
           <nav style={S.nav}>
-            {[['volume','Volume',<VolumeIcon/>],['rates','Rate Trends',<RateIcon/>],['lanes','All Lanes',<LaneIcon/>],['broker','Broker',<BrokerIcon/>],['cycle','Truck Cycle',<CycleIcon/>]].map(([id,label,icon])=>(
+            {[['volume','Volume',<VolumeIcon/>],['rates','Rate Trends',<RateIcon/>],['lanes','All Lanes',<LaneIcon/>],['broker','Broker',<BrokerIcon/>],['cycle','Truck Cycle',<CycleIcon/>],['costs','Cost Breakdown',<CostIcon/>]].map(([id,label,icon])=>(
               <button key={id} className={`nav-btn${tab===id?' active':''}`}
                 style={{ ...S.navBtn, ...(tab===id?S.navActive:{}) }}
                 onClick={()=>changeTab(id)}>
@@ -398,13 +506,6 @@ export default function Dashboard() {
               </button>
             ))}
           </nav>
-
-          <div style={{ margin:'12px 0', padding:'10px 0', borderTop:'0.5px solid rgba(255,255,255,0.06)' }}>
-            <a href="/costs" style={{ display:'flex', alignItems:'center', gap:9, padding:'8px 10px', borderRadius:7, background:'rgba(0,255,204,0.06)', color:'#00FFCC', fontSize:13, cursor:'pointer', textAlign:'left', width:'100%', fontFamily:'inherit', textDecoration:'none', fontWeight:600, border:'0.5px solid rgba(0,255,204,0.15)', transition:'all 0.15s' }}>
-              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 16h16"/><path d="M4 16V8l4-4 4 6 4-3v9"/></svg>
-              Cost Intelligence
-            </a>
-          </div>
 
           <div style={S.sideFooter}>
             <div style={S.dataTag}>Jan 2025 – Mar 2026</div>
@@ -418,7 +519,7 @@ export default function Dashboard() {
           <header style={S.header}>
             <div>
               <div style={S.headerTitle}>
-                {tab==='volume'&&'Volume Trends'}{tab==='rates'&&'Rate Trends'}{tab==='lanes'&&'All Lanes'}{tab==='broker'&&'Broker Corridor'}{tab==='cycle'&&'Truck Cycle'}
+                {tab==='volume'&&'Volume Trends'}{tab==='rates'&&'Rate Trends'}{tab==='lanes'&&'All Lanes'}{tab==='broker'&&'Broker Corridor'}{tab==='cycle'&&'Truck Cycle'}{tab==='costs'&&'Cost Breakdown'}
               </div>
               <div style={S.headerSub}>Sunset Grown — Fleet partnership analysis</div>
             </div>
@@ -676,6 +777,216 @@ export default function Dashboard() {
                 </div>
               </>
             )}
+
+            {/* COSTS */}
+            {tab==='costs'&&(
+              <>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+                  <div style={{ display:'flex', gap:4 }}>
+                    {[['profit','Lane Profitability'],['targets','Cost Targets'],['sim','Simulation']].map(([id,label])=>(
+                      <button key={id} className={`cost-sub-tab${costTab===id?' active':''}`} onClick={()=>setCostTab(id)}>{label}</button>
+                    ))}
+                  </div>
+                  <div style={{ display:'flex', gap:14, alignItems:'center' }}>
+                    <div style={{ textAlign:'center' }}>
+                      <div style={{ fontSize:9, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.06em' }}>ALL-IN CPM</div>
+                      <div style={{ fontSize:18, fontWeight:800, color:allInCPM>2?'#FF6B6B':allInCPM>1.3?'#FFB84D':'#00FFCC' }}>${allInCPM.toFixed(2)}</div>
+                    </div>
+                    <div style={{ textAlign:'center' }}>
+                      <div style={{ fontSize:9, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.06em' }}>TARGET</div>
+                      <div style={{ fontSize:18, fontWeight:800, color:'#00FFCC' }}>{targetMargin}%</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PROFIT SUB-TAB */}
+                {costTab==='profit'&&(<>
+                  <div style={S.card}>
+                    <div style={S.cardTitle}>Operating margin by lane {driver>0?`(incl driver $${driver.toFixed(2)}/mi)`:'(equipment only — excl driver pay)'}</div>
+                    <div style={{ height:310, position:'relative' }}><canvas ref={refs.costProfit}/></div>
+                    <div style={{ display:'flex', gap:14, marginTop:8, fontSize:10, color:'rgba(255,255,255,0.35)' }}>
+                      <span><span style={{ display:'inline-block', width:8, height:8, borderRadius:2, background:'rgba(0,255,204,0.7)', marginRight:3 }}/>≥ {targetMargin}% target</span>
+                      <span><span style={{ display:'inline-block', width:8, height:8, borderRadius:2, background:'rgba(255,184,77,0.6)', marginRight:3 }}/>10–{targetMargin}%</span>
+                      <span><span style={{ display:'inline-block', width:8, height:8, borderRadius:2, background:'rgba(255,107,107,0.6)', marginRight:3 }}/>&lt; 10%</span>
+                    </div>
+                  </div>
+                  <div style={S.secLabel}>Lane P&L</div>
+                  <div style={S.tableWrap}>
+                    <table style={S.tbl} className="tbl">
+                      <thead><tr>
+                        <th style={{ ...S.th, textAlign:'left', minWidth:190 }}>Lane</th><th style={S.th}>Type</th><th style={S.th}>Loads</th>
+                        <th style={S.th}>Revenue</th><th style={S.th}>Miles</th><th style={S.th}>RPM</th>
+                        <th style={S.th}>Est. Cost</th><th style={S.th}>Profit</th><th style={S.th}>Margin</th>
+                      </tr></thead>
+                      <tbody>
+                        {COST_LANES.map((l,i) => { const c=calcLane(l); return (
+                          <tr key={i} style={i%2===0?{ background:'rgba(255,255,255,0.015)' }:{}}>
+                            <td style={{ ...S.td, textAlign:'left', fontWeight:500, fontSize:10 }}>{l.lane}</td>
+                            <td style={S.td}><span style={{ fontSize:9, padding:'1px 5px', borderRadius:3, background:l.type==='SG'?'rgba(0,255,204,0.08)':'rgba(77,158,255,0.08)', color:l.type==='SG'?'#00FFCC':'#4D9EFF' }}>{l.type==='SG'?'Direct':'Broker'}</span></td>
+                            <td style={{ ...S.td, ...S.tdr }}>{l.ct}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:600 }}>{$k(l.rev)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{l.mi}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>${(l.rev/l.mi).toFixed(2)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k(c.cost)}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:700, color:c.profit>0?'#00FFCC':'#FF6B6B' }}>{c.profit>0?$k(c.profit):`(${$k(Math.abs(c.profit))})`}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:800, color:mc(c.margin) }}>{c.margin}%</td>
+                          </tr>);
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>)}
+
+                {/* TARGETS SUB-TAB */}
+                {costTab==='targets'&&(<>
+                  <div style={{ ...S.card, display:'flex', alignItems:'center', gap:14 }}>
+                    <span style={{ fontSize:12, color:'rgba(255,255,255,0.5)', whiteSpace:'nowrap' }}>Target margin</span>
+                    <input type="range" min={15} max={35} value={targetMargin} onChange={e=>setTargetMargin(Number(e.target.value))} style={{ flex:1, accentColor:'#00FFCC', cursor:'pointer' }} />
+                    <span style={{ fontSize:22, fontWeight:800, color:'#00FFCC', minWidth:50, textAlign:'right' }}>{targetMargin}%</span>
+                  </div>
+                  <div style={S.secLabel}>Max all-in CPM and driver pay budget per lane to hit {targetMargin}%</div>
+                  <div style={S.tableWrap}>
+                    <table style={S.tbl} className="tbl">
+                      <thead><tr>
+                        <th style={{ ...S.th, textAlign:'left', minWidth:190 }}>Lane</th><th style={S.th}>Revenue</th><th style={S.th}>Miles</th>
+                        <th style={S.th}>Max Total Cost</th><th style={S.th}>Max All-In CPM</th>
+                        <th style={S.th}>Equip Cost</th><th style={S.th}>Driver Budget</th><th style={S.th}>Max $/mi</th><th style={S.th}>Status</th>
+                      </tr></thead>
+                      <tbody>
+                        {COST_LANES.map((l,i) => { const c=calcLane(l); const viable=c.drvBudget>0; return (
+                          <tr key={i} style={i%2===0?{ background:'rgba(255,255,255,0.015)' }:{}}>
+                            <td style={{ ...S.td, textAlign:'left', fontWeight:500, fontSize:10 }}>{l.lane}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:600 }}>{$k(l.rev)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{l.mi}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k(c.tgtCost)}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:700, color:'#00FFCC' }}>${c.tgtCPM.toFixed(2)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k((allInCPM-driverCPM)*l.mi)}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:600, color:viable?'#00FFCC':'#FF6B6B' }}>{viable?$k(c.drvBudget):`(${$k(Math.abs(c.drvBudget))})`}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:600, color:viable?'#00FFCC':'#FF6B6B' }}>{viable?`$${c.drvCPM.toFixed(2)}/mi`:'—'}</td>
+                            <td style={S.td}><span style={{ fontSize:9, fontWeight:700, padding:'2px 6px', borderRadius:3,
+                              background:c.drvBudget>500?'rgba(0,255,204,0.1)':viable?'rgba(255,184,77,0.1)':'rgba(255,107,107,0.1)',
+                              color:c.drvBudget>500?'#00FFCC':viable?'#FFB84D':'#FF6B6B' }}>{c.drvBudget>500?'STRONG':viable?'TIGHT':'OVER'}</span></td>
+                          </tr>);
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>)}
+
+                {/* SIMULATION SUB-TAB */}
+                {costTab==='sim'&&(<>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                    <div style={S.card}>
+                      <div style={S.cardTitle}>Variable Costs</div>
+                      {[
+                        ['Fuel price', fuelPPG, setFuelPPG, '/gal', 0.01],
+                        ['Fuel efficiency', mpg, setMPG, 'MPG', 0.1],
+                        ['Tolls', toll, setToll, '/mi', 0.01],
+                        ['DEF fluid', def_, setDef, '/mi', 0.001],
+                        ['Reefer fuel', reefer, setReefer, '/mi', 0.001],
+                        ['Maintenance', maint, setMaint, '/mi', 0.01],
+                        ['Driver pay', driver, setDriver, '/mi', 0.01],
+                      ].map(([label, val, setter, unit, step]) => (
+                        <div key={label} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0', borderBottom:'0.5px solid rgba(255,255,255,0.04)' }}>
+                          <span style={{ fontSize:12, color:'rgba(255,255,255,0.5)' }}>{label}</span>
+                          <div className="cost-stepper">
+                            <button className="stepper-btn minus" onClick={()=>setter(v=>Math.max(0,Math.round((v-step)*1000)/1000))}>−</button>
+                            <input type="number" value={val} onChange={e=>setter(parseFloat(e.target.value)||0)} step={step} min={0}
+                              style={{ width:64, padding:'5px 6px', background:'rgba(255,255,255,0.06)', border:'0.5px solid rgba(255,255,255,0.15)', borderRadius:0, color:'#fff', fontSize:13, fontFamily:'inherit', textAlign:'center', fontVariantNumeric:'tabular-nums' }} />
+                            <button className="stepper-btn plus" onClick={()=>setter(v=>Math.round((v+step)*1000)/1000)}>+</button>
+                            <span style={{ fontSize:10, color:'rgba(255,255,255,0.3)', marginLeft:6, minWidth:28 }}>{unit}</span>
+                          </div>
+                        </div>
+                      ))}
+                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingTop:12 }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:'rgba(220,220,220,0.8)' }}>Total Variable CPM</span>
+                        <span style={{ fontSize:13, fontWeight:700, color:'#00FFCC' }}>${varCPM.toFixed(2)}/mi</span>
+                      </div>
+                    </div>
+                    <div style={S.card}>
+                      <div style={S.cardTitle}>Fixed Costs (monthly)</div>
+                      {[
+                        ['Truck payment', truckPmt, setTruckPmt, '/mo', 1],
+                        ['Trailer payment', trailerPmt, setTrailerPmt, '/mo', 1],
+                        ['Truck insurance', truckIns, setTruckIns, '/mo', 1],
+                        ['Trailer insurance', trailerIns, setTrailerIns, '/mo', 1],
+                      ].map(([label, val, setter, unit, step]) => (
+                        <div key={label} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0', borderBottom:'0.5px solid rgba(255,255,255,0.04)' }}>
+                          <span style={{ fontSize:12, color:'rgba(255,255,255,0.5)' }}>{label}</span>
+                          <div className="cost-stepper">
+                            <button className="stepper-btn minus" onClick={()=>setter(v=>Math.max(0,v-step*50))}>−</button>
+                            <input type="number" value={val} onChange={e=>setter(parseFloat(e.target.value)||0)} step={step} min={0}
+                              style={{ width:72, padding:'5px 6px', background:'rgba(255,255,255,0.06)', border:'0.5px solid rgba(255,255,255,0.15)', borderRadius:0, color:'#fff', fontSize:13, fontFamily:'inherit', textAlign:'center', fontVariantNumeric:'tabular-nums' }} />
+                            <button className="stepper-btn plus" onClick={()=>setter(v=>v+step*50)}>+</button>
+                            <span style={{ fontSize:10, color:'rgba(255,255,255,0.3)', marginLeft:6, minWidth:24 }}>{unit}</span>
+                          </div>
+                        </div>
+                      ))}
+                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0', borderBottom:'0.5px solid rgba(255,255,255,0.08)' }}>
+                        <span style={{ fontSize:12, fontWeight:600, color:'rgba(220,220,220,0.7)' }}>Total fixed/mo</span>
+                        <span style={{ fontSize:14, fontWeight:700, color:'#FFB84D' }}>{$k(fixedMo)}</span>
+                      </div>
+                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0' }}>
+                        <div>
+                          <span style={{ fontSize:12, color:'rgba(255,255,255,0.5)' }}>Miles / month</span>
+                          <div style={{ fontSize:9, color:'rgba(255,255,255,0.2)', marginTop:1 }}>controls fixed cost spread</div>
+                        </div>
+                        <div className="cost-stepper">
+                          <button className="stepper-btn minus" onClick={()=>setMilesMo(v=>Math.max(1000,v-500))}>−</button>
+                          <input type="number" value={milesMo} onChange={e=>setMilesMo(parseFloat(e.target.value)||0)} step={500} min={0}
+                            style={{ width:72, padding:'5px 6px', background:'rgba(255,255,255,0.06)', border:'0.5px solid rgba(255,255,255,0.15)', borderRadius:0, color:'#fff', fontSize:13, fontFamily:'inherit', textAlign:'center', fontVariantNumeric:'tabular-nums' }} />
+                          <button className="stepper-btn plus" onClick={()=>setMilesMo(v=>v+500)}>+</button>
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0' }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:'rgba(220,220,220,0.8)' }}>Fixed CPM</span>
+                        <span style={{ fontSize:13, fontWeight:700, color:'#FFB84D' }}>${fixedCPM.toFixed(2)}/mi</span>
+                      </div>
+                      <div style={{ background:'rgba(0,255,204,0.04)', border:'0.5px solid rgba(0,255,204,0.15)', borderRadius:6, padding:'12px 14px', marginTop:10 }}>
+                        <div style={{ fontSize:10, color:'rgba(255,255,255,0.35)', marginBottom:4, letterSpacing:'0.06em', fontWeight:700 }}>ALL-IN COST PER MILE</div>
+                        <div style={{ fontSize:26, fontWeight:800, color:allInCPM>2?'#FF6B6B':allInCPM>1.3?'#FFB84D':'#00FFCC' }}>${allInCPM.toFixed(2)}</div>
+                        <div style={{ fontSize:10, color:'rgba(255,255,255,0.3)', marginTop:3 }}>Variable ${varCPM.toFixed(2)} + Fixed ${fixedCPM.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'6px 0 8px' }}>
+                    <div style={S.secLabel}>Lane impact at ${allInCPM.toFixed(2)}/mi all-in</div>
+                    <button style={{ padding:'5px 14px', borderRadius:5, border:'0.5px solid rgba(255,255,255,0.12)', background:'transparent', color:'rgba(255,255,255,0.4)', fontSize:10, cursor:'pointer', fontFamily:'inherit' }} onClick={resetCosts}>Reset to WPL Defaults</button>
+                  </div>
+                  <div style={S.tableWrap}>
+                    <table style={S.tbl} className="tbl">
+                      <thead><tr>
+                        <th style={{ ...S.th, textAlign:'left', minWidth:180 }}>Lane</th><th style={S.th}>Revenue</th><th style={S.th}>Miles</th>
+                        <th style={S.th}>Fuel</th><th style={S.th}>Toll</th><th style={S.th}>Maint</th><th style={S.th}>Fixed</th>
+                        {driver>0&&<th style={S.th}>Driver</th>}
+                        <th style={S.th}>Total Cost</th><th style={S.th}>Profit</th><th style={S.th}>Margin</th>
+                      </tr></thead>
+                      <tbody>
+                        {COST_LANES.map((l,i) => { const c=calcLane(l); return (
+                          <tr key={i} style={i%2===0?{ background:'rgba(255,255,255,0.015)' }:{}}>
+                            <td style={{ ...S.td, textAlign:'left', fontWeight:500, fontSize:10 }}>{l.lane}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:600 }}>{$k(l.rev)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{l.mi}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k(c.fuelEst)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k(c.tollEst)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k(c.maintEst)}</td>
+                            <td style={{ ...S.td, ...S.tdr }}>{$k(c.fixEst)}</td>
+                            {driver>0&&<td style={{ ...S.td, ...S.tdr }}>{$k(c.drvEst)}</td>}
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:600 }}>{$k(c.cost)}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:700, color:c.profit>0?'#00FFCC':'#FF6B6B' }}>{c.profit>0?$k(c.profit):`(${$k(Math.abs(c.profit))})`}</td>
+                            <td style={{ ...S.td, ...S.tdr, fontWeight:800, color:mc(c.margin) }}>{c.margin}%</td>
+                          </tr>);
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ fontSize:10, color:'rgba(255,255,255,0.2)', marginTop:6 }}>
+                    Variable costs include 5% aggressive cushion. All figures derived from WPL operational data: Fuel Purchase, EZPass, FleetUp telematics, Asset Tracker, Insurance.
+                  </div>
+                </>)}
+              </>
+            )}
+
           </div>
         </main>
       </div>
@@ -688,6 +999,7 @@ const RateIcon   = () => <svg width="14" height="14" viewBox="0 0 20 20" fill="n
 const LaneIcon   = () => <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4h12M4 10h12M4 16h12"/></svg>
 const BrokerIcon = () => <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>
 const CycleIcon  = () => <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 8A7 7 0 0 0 5.3 5.3L3 8"/><path d="M3 12a7 7 0 0 0 11.7 2.7L17 12"/><polyline points="3,8 3,3 8,3"/><polyline points="17,12 17,17 12,17"/></svg>
+const CostIcon   = () => <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10" cy="10" r="7"/><path d="M10 6v8"/><path d="M12 8.5c0-1-0.9-1.5-2-1.5s-2 .5-2 1.5 .9 1.3 2 1.5 2 .5 2 1.5-.9 1.5-2 1.5-2-.5-2-1.5"/></svg>
 
 const S = {
   shell:      { display:'flex', height:'100vh', overflow:'hidden', background:'#000' },
