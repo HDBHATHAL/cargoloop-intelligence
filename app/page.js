@@ -399,6 +399,13 @@ export default function Dashboard() {
             ))}
           </nav>
 
+          <div style={{ margin:'12px 0', padding:'10px 0', borderTop:'0.5px solid rgba(255,255,255,0.06)' }}>
+            <a href="/costs" style={{ display:'flex', alignItems:'center', gap:9, padding:'8px 10px', borderRadius:7, background:'rgba(0,255,204,0.06)', color:'#00FFCC', fontSize:13, cursor:'pointer', textAlign:'left', width:'100%', fontFamily:'inherit', textDecoration:'none', fontWeight:600, border:'0.5px solid rgba(0,255,204,0.15)', transition:'all 0.15s' }}>
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 16h16"/><path d="M4 16V8l4-4 4 6 4-3v9"/></svg>
+              Cost Intelligence
+            </a>
+          </div>
+
           <div style={S.sideFooter}>
             <div style={S.dataTag}>Jan 2025 – Mar 2026</div>
             <div style={S.dataTag}>WPL Tracker + LoadConnex</div>
